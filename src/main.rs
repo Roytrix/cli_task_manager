@@ -223,7 +223,7 @@ mod tests {
 
     fn setup() -> TaskManager {
         let file_path = "test_tasks.json";
-        let _ = fs::remove_file(file_path); // Clean up before test
+        teardown(); // Clean up before test
         TaskManager::new(file_path).unwrap()
     }
 
@@ -246,11 +246,12 @@ mod tests {
             .unwrap();
 
         let task = task_manager.tasks.get(&id).unwrap();
+
+        teardown();
+
         assert_eq!(task.title, title);
         assert_eq!(task.description, description);
         assert_eq!(task.status, TaskStatus::Todo);
-
-        teardown();
     }
     #[test]
     fn add_task_with_empty_description() {
@@ -263,11 +264,12 @@ mod tests {
             .unwrap();
 
         let task = task_manager.tasks.get(&id).unwrap();
+
+        teardown();
+
         assert_eq!(task.title, title);
         assert_eq!(task.description, description);
         assert_eq!(task.status, TaskStatus::Todo);
-
-        teardown();
     }
 
     #[test]
@@ -284,9 +286,10 @@ mod tests {
         assert!(updated);
 
         let task = task_manager.tasks.get(&id).unwrap();
-        assert_eq!(task.status, TaskStatus::InProgress);
 
         teardown();
+
+        assert_eq!(task.status, TaskStatus::InProgress);
     }
 
     #[test]
@@ -294,10 +297,11 @@ mod tests {
         let mut task_manager = setup();
 
         let result = task_manager.update_status(999, TaskStatus::InProgress);
-        assert!(result.is_ok());
-        assert!(!result.unwrap());
 
         teardown();
+
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
     }
 
     #[test]
@@ -313,23 +317,21 @@ mod tests {
 
         let tasks = task_manager.list_tasks();
         teardown();
+
         assert_eq!(tasks.len(), 2);
     }
 
     #[test]
     fn save_and_load_tasks_persists_data() {
-        let file_path = "test_tasks.json";
-        {
-            let mut task_manager = TaskManager::new(file_path).unwrap();
-            task_manager
-                .add_task("Task 1".to_string(), "Description 1".to_string())
-                .unwrap();
-            task_manager
-                .add_task("Task 2".to_string(), "Description 2".to_string())
-                .unwrap();
-        }
+        let mut task_manager = setup();
 
-        let task_manager = TaskManager::new(file_path).unwrap();
+        task_manager
+            .add_task("Task 1".to_string(), "Description 1".to_string())
+            .unwrap();
+        task_manager
+            .add_task("Task 2".to_string(), "Description 2".to_string())
+            .unwrap();
+
         let tasks = task_manager.list_tasks();
         teardown();
         assert_eq!(tasks.len(), 2);
@@ -349,7 +351,9 @@ mod tests {
     #[test]
     fn save_tasks_with_read_only_file() {
         let file_path = "test_tasks.json";
-        let mut task_manager = TaskManager::new(file_path).unwrap();
+
+        let mut task_manager = setup();
+
         task_manager
             .add_task("Task 1".to_string(), "Description 1".to_string())
             .unwrap();
