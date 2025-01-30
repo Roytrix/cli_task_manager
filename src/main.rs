@@ -1,12 +1,19 @@
+use chrono::Local;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, Write};
 use std::path::Path;
-use chrono::Local;
-use serde_derive::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Task {
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub enum TaskStatus {
+    Todo,
+    InProgress,
+    Done,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct Task {
     id: u32,
     title: String,
     description: String,
@@ -14,21 +21,14 @@ struct Task {
     created_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-enum TaskStatus {
-    Todo,
-    InProgress,
-    Done,
-}
-
-struct TaskManager {
+pub struct TaskManager {
     tasks: HashMap<u32, Task>,
     next_id: u32,
     file_path: String,
 }
 
 impl TaskManager {
-    fn new(file_path: &str) -> io::Result<Self> {
+    pub fn new(file_path: &str) -> io::Result<Self> {
         let mut task_manager = TaskManager {
             tasks: HashMap::new(),
             next_id: 1,
@@ -42,7 +42,7 @@ impl TaskManager {
         Ok(task_manager)
     }
 
-    fn add_task(&mut self, title: String, description: String) -> io::Result<u32> {
+    pub fn add_task(&mut self, title: String, description: String) -> io::Result<u32> {
         let task = Task {
             id: self.next_id,
             title,
@@ -57,7 +57,7 @@ impl TaskManager {
         Ok(self.next_id - 1)
     }
 
-    fn update_status(&mut self, id: u32, status: TaskStatus) -> io::Result<bool> {
+    pub fn update_status(&mut self, id: u32, status: TaskStatus) -> io::Result<bool> {
         if let Some(task) = self.tasks.get_mut(&id) {
             task.status = status;
             self.save_tasks()?;
@@ -67,7 +67,7 @@ impl TaskManager {
         }
     }
 
-    fn list_tasks(&self) -> Vec<&Task> {
+    pub fn list_tasks(&self) -> Vec<&Task> {
         self.tasks.values().collect()
     }
 
@@ -92,71 +92,279 @@ impl TaskManager {
     }
 }
 
-fn main() -> io::Result<()> {
-    let mut task_manager = TaskManager::new("tasks.json")?;
+// IO trait definition
+pub trait IO {
+    fn read_line(&mut self) -> io::Result<String>;
+    fn write_line(&mut self, line: &str) -> io::Result<()>;
+}
 
-    loop {
-        println!("\nTask Manager");
-        println!("1. Add Task");
-        println!("2. List Tasks");
-        println!("3. Update Task Status");
-        println!("4. Exit");
+// Console IO implementation
+pub struct ConsoleIO;
 
-        let mut choice = String::new();
-        io::stdin().read_line(&mut choice)?;
+impl IO for ConsoleIO {
+    fn read_line(&mut self) -> io::Result<String> {
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        Ok(input.trim().to_string())
+    }
 
-        match choice.trim() {
-            "1" => {
-                println!("Enter task title:");
-                let mut title = String::new();
-                io::stdin().read_line(&mut title)?;
+    fn write_line(&mut self, line: &str) -> io::Result<()> {
+        println!("{}", line);
+        Ok(())
+    }
+}
 
-                println!("Enter task description:");
-                let mut description = String::new();
-                io::stdin().read_line(&mut description)?;
+// Task Application
+pub struct TaskApp {
+    task_manager: TaskManager,
+    io: Box<dyn IO>,
+}
 
-                let id = task_manager.add_task(
-                    title.trim().to_string(),
-                    description.trim().to_string()
-                )?;
-                println!("Task added with ID: {}", id);
+impl TaskApp {
+    pub fn new(task_manager: TaskManager, io: Box<dyn IO>) -> Self {
+        Self { task_manager, io }
+    }
+
+    pub fn run(&mut self) -> io::Result<()> {
+        loop {
+            self.io.write_line("\nTask Manager")?;
+            self.io.write_line("1. Add Task")?;
+            self.io.write_line("2. List Tasks")?;
+            self.io.write_line("3. Update Task Status")?;
+            self.io.write_line("4. Exit")?;
+
+            match self.io.read_line()?.as_str() {
+                "1" => self.handle_add_task()?,
+                "2" => self.handle_list_tasks()?,
+                "3" => self.handle_update_status()?,
+                "4" => break,
+                _ => self.io.write_line("Invalid choice!")?,
             }
-            "2" => {
-                for task in task_manager.list_tasks() {
-                    println!("\nID: {}", task.id);
-                    println!("Title: {}", task.title);
-                    println!("Description: {}", task.description);
-                    println!("Status: {:?}", task.status);
-                    println!("Created: {}", task.created_at);
-                }
-            }
-            "3" => {
-                println!("Enter task ID:");
-                let mut id_str = String::new();
-                io::stdin().read_line(&mut id_str)?;
-                let id = id_str.trim().parse::<u32>().unwrap_or(0);
+        }
+        Ok(())
+    }
 
-                println!("Enter new status (1: Todo, 2: InProgress, 3: Done):");
-                let mut status_str = String::new();
-                io::stdin().read_line(&mut status_str)?;
+    fn handle_add_task(&mut self) -> io::Result<()> {
+        self.io.write_line("Enter task title:")?;
+        let title = self.io.read_line()?;
+        self.io.write_line("Enter task description:")?;
+        let description = self.io.read_line()?;
 
-                let new_status = match status_str.trim() {
-                    "1" => TaskStatus::Todo,
-                    "2" => TaskStatus::InProgress,
-                    "3" => TaskStatus::Done,
-                    _ => continue,
-                };
-
-                if task_manager.update_status(id, new_status)? {
-                    println!("Task updated successfully!");
-                } else {
-                    println!("Task not found!");
-                }
-            }
-            "4" => break,
-            _ => println!("Invalid choice!"),
+        match self.add_task_logic(title, description) {
+            Ok(id) => self.io.write_line(&format!("Task added with ID:{}", id)),
+            Err(err) => self.io.write_line(&err),
         }
     }
 
-    Ok(())
+    fn add_task_logic(&mut self, title: String, description: String) -> Result<u32, String> {
+        if title.trim().is_empty() {
+            return Err("Title cannot be empty".to_string());
+        }
+
+        self.task_manager
+            .add_task(title, description)
+            .map_err(|e| e.to_string())
+    }
+
+    fn handle_list_tasks(&mut self) -> io::Result<()> {
+        for task in self.task_manager.list_tasks() {
+            self.io.write_line(&format!("\nID: {}", task.id))?;
+            self.io.write_line(&format!("Title: {}", task.title))?;
+            self.io
+                .write_line(&format!("Description: {}", task.description))?;
+            self.io.write_line(&format!("Status: {:?}", task.status))?;
+            self.io
+                .write_line(&format!("Created: {}", task.created_at))?;
+        }
+        Ok(())
+    }
+
+    fn handle_update_status(&mut self) -> io::Result<()> {
+        self.io.write_line("Enter task ID:")?;
+        let id_str = self.io.read_line()?;
+        let id = id_str.parse::<u32>().unwrap_or(0);
+
+        self.io
+            .write_line("Enter new status (1: Todo, 2: InProgress, 3: Done):")?;
+        let status_str = self.io.read_line()?;
+
+        let new_status = match status_str.as_str() {
+            "1" => Some(TaskStatus::Todo),
+            "2" => Some(TaskStatus::InProgress),
+            "3" => Some(TaskStatus::Done),
+            _ => None,
+        };
+
+        if let Some(status) = new_status {
+            if self.task_manager.update_status(id, status)? {
+                self.io.write_line("Task updated successfully!")?;
+            } else {
+                self.io.write_line("Task not found!")?;
+            }
+        } else {
+            self.io.write_line("Invalid status!")?;
+        }
+        Ok(())
+    }
+}
+
+fn main() -> io::Result<()> {
+    let task_manager = TaskManager::new("tasks.json")?;
+    let console_io = Box::new(ConsoleIO);
+    let mut app = TaskApp::new(task_manager, console_io);
+    app.run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use std::{fs, thread};
+
+    fn setup() -> TaskManager {
+        let file_path = "test_tasks.json";
+        let _ = fs::remove_file(file_path); // Clean up before test
+        TaskManager::new(file_path).unwrap()
+    }
+
+    fn teardown() {
+        let file_path = "test_tasks.json";
+        while Path::new(file_path).exists() {
+            let _ = fs::remove_file(file_path);
+            thread::sleep(Duration::from_secs(2));
+        }
+    }
+
+    #[test]
+    fn add_task_with_valid_data() {
+        let mut task_manager = setup();
+
+        let title = "Test Task".to_string();
+        let description = "This is a test task".to_string();
+        let id = task_manager
+            .add_task(title.clone(), description.clone())
+            .unwrap();
+
+        let task = task_manager.tasks.get(&id).unwrap();
+        assert_eq!(task.title, title);
+        assert_eq!(task.description, description);
+        assert_eq!(task.status, TaskStatus::Todo);
+
+        teardown();
+    }
+    #[test]
+    fn add_task_with_empty_description() {
+        let mut task_manager = setup();
+
+        let title = "Test Task".to_string();
+        let description = "".to_string();
+        let id = task_manager
+            .add_task(title.clone(), description.clone())
+            .unwrap();
+
+        let task = task_manager.tasks.get(&id).unwrap();
+        assert_eq!(task.title, title);
+        assert_eq!(task.description, description);
+        assert_eq!(task.status, TaskStatus::Todo);
+
+        teardown();
+    }
+
+    #[test]
+    fn update_status_of_existing_task() {
+        let mut task_manager = setup();
+
+        let title = "Test Task".to_string();
+        let description = "This is a test task".to_string();
+        let id = task_manager.add_task(title, description).unwrap();
+
+        let updated = task_manager
+            .update_status(id, TaskStatus::InProgress)
+            .unwrap();
+        assert!(updated);
+
+        let task = task_manager.tasks.get(&id).unwrap();
+        assert_eq!(task.status, TaskStatus::InProgress);
+
+        teardown();
+    }
+
+    #[test]
+    fn update_status_of_nonexistent_task() {
+        let mut task_manager = setup();
+
+        let result = task_manager.update_status(999, TaskStatus::InProgress);
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+
+        teardown();
+    }
+
+    #[test]
+    fn list_tasks_returns_all_tasks() {
+        let mut task_manager = setup();
+
+        task_manager
+            .add_task("Task 1".to_string(), "Description 1".to_string())
+            .unwrap();
+        task_manager
+            .add_task("Task 2".to_string(), "Description 2".to_string())
+            .unwrap();
+
+        let tasks = task_manager.list_tasks();
+        teardown();
+        assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn save_and_load_tasks_persists_data() {
+        let file_path = "test_tasks.json";
+        {
+            let mut task_manager = TaskManager::new(file_path).unwrap();
+            task_manager
+                .add_task("Task 1".to_string(), "Description 1".to_string())
+                .unwrap();
+            task_manager
+                .add_task("Task 2".to_string(), "Description 2".to_string())
+                .unwrap();
+        }
+
+        let task_manager = TaskManager::new(file_path).unwrap();
+        let tasks = task_manager.list_tasks();
+        teardown();
+        assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn load_tasks_with_invalid_json() {
+        let file_path = "test_tasks.json";
+        fs::write(file_path, "invalid json").unwrap();
+
+        let result = TaskManager::new(file_path);
+
+        teardown();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn save_tasks_with_read_only_file() {
+        let file_path = "test_tasks.json";
+        let mut task_manager = TaskManager::new(file_path).unwrap();
+        task_manager
+            .add_task("Task 1".to_string(), "Description 1".to_string())
+            .unwrap();
+
+        // Make the file read-only
+        let metadata = fs::metadata(file_path).unwrap();
+        let mut perms = metadata.permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(file_path, perms.clone()).unwrap();
+
+        let result = task_manager.save_tasks();
+
+        perms.set_readonly(false);
+        fs::set_permissions(file_path, perms).unwrap();
+        teardown();
+        assert!(result.is_err());
+    }
 }
