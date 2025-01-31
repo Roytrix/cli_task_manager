@@ -57,6 +57,15 @@ impl TaskManager {
         Ok(self.next_id - 1)
     }
 
+    pub fn delete_task(&mut self, id: u32) -> io::Result<bool> {
+        if self.tasks.remove(&id).is_some() {
+            self.save_tasks()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     pub fn update_status(&mut self, id: u32, status: TaskStatus) -> io::Result<bool> {
         if let Some(task) = self.tasks.get_mut(&id) {
             task.status = status;
@@ -131,13 +140,15 @@ impl TaskApp {
             self.io.write_line("1. Add Task")?;
             self.io.write_line("2. List Tasks")?;
             self.io.write_line("3. Update Task Status")?;
+            self.io.write_line("4. Delete Task")?;
             self.io.write_line("4. Exit")?;
 
             match self.io.read_line()?.as_str() {
                 "1" => self.handle_add_task()?,
                 "2" => self.handle_list_tasks()?,
                 "3" => self.handle_update_status()?,
-                "4" => break,
+                "4" => self.handle_delete_task()?,
+                "5" => break,
                 _ => self.io.write_line("Invalid choice!")?,
             }
         }
@@ -154,6 +165,19 @@ impl TaskApp {
             Ok(id) => self.io.write_line(&format!("Task added with ID:{}", id)),
             Err(err) => self.io.write_line(&err),
         }
+    }
+
+    fn handle_delete_task(&mut self) -> io::Result<()> {
+        self.io.write_line("Enter task ID to delete")?;
+        let id_str = self.io.read_line()?;
+        let id = id_str.parse::<u32>().unwrap_or(0);
+
+        if self.task_manager.delete_task(id)? {
+            self.io.write_line("Task deleted successfully!")?;
+        } else {
+            self.io.write_line("Task not found!")?;
+        }
+        Ok(())
     }
 
     fn add_task_logic(&mut self, title: String, description: String) -> Result<u32, String> {
@@ -273,6 +297,22 @@ mod tests {
     }
 
     #[test]
+    fn delete_existing_task() {
+        let mut task_manager = setup();
+
+        let title = "Test Task".to_string();
+        let description = "This is a test task".to_string();
+        let id = task_manager.add_task(title, description).unwrap();
+
+        let deleted = task_manager.delete_task(id).unwrap();
+
+        teardown();
+
+        assert!(deleted);
+        assert!(task_manager.tasks.get(&id).is_none())
+    }
+
+    #[test]
     fn update_status_of_existing_task() {
         let mut task_manager = setup();
 
@@ -339,10 +379,12 @@ mod tests {
 
     #[test]
     fn load_tasks_with_invalid_json() {
+        let mut task_manager = setup();
+
         let file_path = "test_tasks.json";
         fs::write(file_path, "invalid json").unwrap();
 
-        let result = TaskManager::new(file_path);
+        let result = task_manager.load_tasks();
 
         teardown();
         assert!(result.is_err());
