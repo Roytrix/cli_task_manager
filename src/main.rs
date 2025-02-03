@@ -1,5 +1,6 @@
 use chrono::Local;
 use serde_derive::{Deserialize, Serialize};
+use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, Write};
@@ -240,23 +241,25 @@ fn main() -> io::Result<()> {
 }
 
 #[cfg(test)]
+#[serial]
 mod tests {
     use super::*;
+    use std::fs::Permissions;
     use std::time::Duration;
     use std::{fs, thread};
 
     fn setup() -> TaskManager {
         let file_path = "test_tasks.json";
-        teardown(); // Clean up before test
         TaskManager::new(file_path).unwrap()
     }
 
-    fn teardown() {
+    fn delete_test_task_json() {
         let file_path = "test_tasks.json";
         while Path::new(file_path).exists() {
             let _ = fs::remove_file(file_path);
-            thread::sleep(Duration::from_secs(2));
+            thread::sleep(Duration::from_secs(1));
         }
+        println!("file deleted");
     }
 
     #[test]
@@ -270,8 +273,7 @@ mod tests {
             .unwrap();
 
         let task = task_manager.tasks.get(&id).unwrap();
-
-        teardown();
+        delete_test_task_json();
 
         assert_eq!(task.title, title);
         assert_eq!(task.description, description);
@@ -288,8 +290,7 @@ mod tests {
             .unwrap();
 
         let task = task_manager.tasks.get(&id).unwrap();
-
-        teardown();
+        delete_test_task_json();
 
         assert_eq!(task.title, title);
         assert_eq!(task.description, description);
@@ -305,11 +306,10 @@ mod tests {
         let id = task_manager.add_task(title, description).unwrap();
 
         let deleted = task_manager.delete_task(id).unwrap();
-
-        teardown();
+        delete_test_task_json();
 
         assert!(deleted);
-        assert!(task_manager.tasks.get(&id).is_none())
+        assert!(!task_manager.tasks.contains_key(&id))
     }
 
     #[test]
@@ -326,8 +326,7 @@ mod tests {
         assert!(updated);
 
         let task = task_manager.tasks.get(&id).unwrap();
-
-        teardown();
+        delete_test_task_json();
 
         assert_eq!(task.status, TaskStatus::InProgress);
     }
@@ -337,8 +336,7 @@ mod tests {
         let mut task_manager = setup();
 
         let result = task_manager.update_status(999, TaskStatus::InProgress);
-
-        teardown();
+        delete_test_task_json();
 
         assert!(result.is_ok());
         assert!(!result.unwrap());
@@ -356,7 +354,7 @@ mod tests {
             .unwrap();
 
         let tasks = task_manager.list_tasks();
-        teardown();
+        delete_test_task_json();
 
         assert_eq!(tasks.len(), 2);
     }
@@ -373,7 +371,8 @@ mod tests {
             .unwrap();
 
         let tasks = task_manager.list_tasks();
-        teardown();
+        delete_test_task_json();
+
         assert_eq!(tasks.len(), 2);
     }
 
@@ -385,8 +384,8 @@ mod tests {
         fs::write(file_path, "invalid json").unwrap();
 
         let result = task_manager.load_tasks();
+        delete_test_task_json();
 
-        teardown();
         assert!(result.is_err());
     }
 
@@ -408,9 +407,9 @@ mod tests {
 
         let result = task_manager.save_tasks();
 
-        perms.set_readonly(false);
+        Permissions::set_readonly(&mut perms, false);
         fs::set_permissions(file_path, perms).unwrap();
-        teardown();
+        delete_test_task_json();
         assert!(result.is_err());
     }
 }
