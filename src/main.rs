@@ -1,6 +1,7 @@
 use chrono::Local;
 use serde_derive::{Deserialize, Serialize};
 use serial_test::serial;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, Write};
@@ -13,6 +14,25 @@ pub enum TaskStatus {
     Done,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub enum TaskPriority {
+    Low,
+    Medium,
+    High,
+}
+
+impl Ord for TaskPriority {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (*self as u8).cmp(&(*other as u8))
+    }
+}
+
+impl PartialOrd for TaskPriority {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Task {
     id: u32,
@@ -20,6 +40,7 @@ pub struct Task {
     description: String,
     status: TaskStatus,
     created_at: String,
+    priority: TaskPriority,
 }
 
 pub struct TaskManager {
@@ -43,13 +64,19 @@ impl TaskManager {
         Ok(task_manager)
     }
 
-    pub fn add_task(&mut self, title: String, description: String) -> io::Result<u32> {
+    pub fn add_task(
+        &mut self,
+        title: String,
+        description: String,
+        priority: TaskPriority,
+    ) -> io::Result<u32> {
         let task = Task {
             id: self.next_id,
             title,
             description,
             status: TaskStatus::Todo,
             created_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            priority,
         };
 
         self.tasks.insert(task.id, task);
@@ -77,8 +104,10 @@ impl TaskManager {
         }
     }
 
-    pub fn list_tasks(&self) -> Vec<&Task> {
-        self.tasks.values().collect()
+    pub fn list_tasks_sorted_by_priority(&self) -> Vec<&Task> {
+        let mut tasks: Vec<&Task> = self.tasks.values().collect();
+        tasks.sort_by(|a, b| a.priority.cmp(&b.priority));
+        tasks
     }
 
     fn save_tasks(&self) -> io::Result<()> {
@@ -142,7 +171,7 @@ impl TaskApp {
             self.io.write_line("2. List Tasks")?;
             self.io.write_line("3. Update Task Status")?;
             self.io.write_line("4. Delete Task")?;
-            self.io.write_line("4. Exit")?;
+            self.io.write_line("5. Exit")?;
 
             match self.io.read_line()?.as_str() {
                 "1" => self.handle_add_task()?,
@@ -161,8 +190,18 @@ impl TaskApp {
         let title = self.io.read_line()?;
         self.io.write_line("Enter task description:")?;
         let description = self.io.read_line()?;
+        self.io
+            .write_line("Enter task priority (1: Low, 2:Medium, 3: High): ")?;
+        let priority_str = self.io.read_line()?;
 
-        match self.add_task_logic(title, description) {
+        let priority = match priority_str.as_str() {
+            "1" => TaskPriority::Low,
+            "2" => TaskPriority::Medium,
+            "3" => TaskPriority::High,
+            _ => TaskPriority::Low,
+        };
+
+        match self.add_task_logic(title, description, priority) {
             Ok(id) => self.io.write_line(&format!("Task added with ID:{}", id)),
             Err(err) => self.io.write_line(&err),
         }
@@ -181,23 +220,30 @@ impl TaskApp {
         Ok(())
     }
 
-    fn add_task_logic(&mut self, title: String, description: String) -> Result<u32, String> {
+    fn add_task_logic(
+        &mut self,
+        title: String,
+        description: String,
+        priority: TaskPriority,
+    ) -> Result<u32, String> {
         if title.trim().is_empty() {
             return Err("Title cannot be empty".to_string());
         }
 
         self.task_manager
-            .add_task(title, description)
+            .add_task(title, description, priority)
             .map_err(|e| e.to_string())
     }
 
     fn handle_list_tasks(&mut self) -> io::Result<()> {
-        for task in self.task_manager.list_tasks() {
+        for task in self.task_manager.list_tasks_sorted_by_priority() {
             self.io.write_line(&format!("\nID: {}", task.id))?;
             self.io.write_line(&format!("Title: {}", task.title))?;
             self.io
                 .write_line(&format!("Description: {}", task.description))?;
             self.io.write_line(&format!("Status: {:?}", task.status))?;
+            self.io
+                .write_line(&format!("Priority: {:?}", task.priority))?;
             self.io
                 .write_line(&format!("Created: {}", task.created_at))?;
         }
@@ -269,7 +315,7 @@ mod tests {
         let title = "Test Task".to_string();
         let description = "This is a test task".to_string();
         let id = task_manager
-            .add_task(title.clone(), description.clone())
+            .add_task(title.clone(), description.clone(), TaskPriority::Low)
             .unwrap();
 
         let task = task_manager.tasks.get(&id).unwrap();
@@ -286,7 +332,7 @@ mod tests {
         let title = "Test Task".to_string();
         let description = "".to_string();
         let id = task_manager
-            .add_task(title.clone(), description.clone())
+            .add_task(title.clone(), description.clone(), TaskPriority::Low)
             .unwrap();
 
         let task = task_manager.tasks.get(&id).unwrap();
@@ -303,7 +349,9 @@ mod tests {
 
         let title = "Test Task".to_string();
         let description = "This is a test task".to_string();
-        let id = task_manager.add_task(title, description).unwrap();
+        let id = task_manager
+            .add_task(title, description, TaskPriority::Low)
+            .unwrap();
 
         let deleted = task_manager.delete_task(id).unwrap();
         delete_test_task_json();
@@ -318,7 +366,9 @@ mod tests {
 
         let title = "Test Task".to_string();
         let description = "This is a test task".to_string();
-        let id = task_manager.add_task(title, description).unwrap();
+        let id = task_manager
+            .add_task(title, description, TaskPriority::Low)
+            .unwrap();
 
         let updated = task_manager
             .update_status(id, TaskStatus::InProgress)
@@ -347,13 +397,21 @@ mod tests {
         let mut task_manager = setup();
 
         task_manager
-            .add_task("Task 1".to_string(), "Description 1".to_string())
+            .add_task(
+                "Task 1".to_string(),
+                "Description 1".to_string(),
+                TaskPriority::Low,
+            )
             .unwrap();
         task_manager
-            .add_task("Task 2".to_string(), "Description 2".to_string())
+            .add_task(
+                "Task 2".to_string(),
+                "Description 2".to_string(),
+                TaskPriority::Low,
+            )
             .unwrap();
 
-        let tasks = task_manager.list_tasks();
+        let tasks = task_manager.list_tasks_sorted_by_priority();
         delete_test_task_json();
 
         assert_eq!(tasks.len(), 2);
@@ -364,13 +422,21 @@ mod tests {
         let mut task_manager = setup();
 
         task_manager
-            .add_task("Task 1".to_string(), "Description 1".to_string())
+            .add_task(
+                "Task 1".to_string(),
+                "Description 1".to_string(),
+                TaskPriority::Low,
+            )
             .unwrap();
         task_manager
-            .add_task("Task 2".to_string(), "Description 2".to_string())
+            .add_task(
+                "Task 2".to_string(),
+                "Description 2".to_string(),
+                TaskPriority::Low,
+            )
             .unwrap();
 
-        let tasks = task_manager.list_tasks();
+        let tasks = task_manager.list_tasks_sorted_by_priority();
         delete_test_task_json();
 
         assert_eq!(tasks.len(), 2);
@@ -396,7 +462,11 @@ mod tests {
         let mut task_manager = setup();
 
         task_manager
-            .add_task("Task 1".to_string(), "Description 1".to_string())
+            .add_task(
+                "Task 1".to_string(),
+                "Description 1".to_string(),
+                TaskPriority::Low,
+            )
             .unwrap();
 
         // Make the file read-only
@@ -411,5 +481,60 @@ mod tests {
         fs::set_permissions(file_path, perms).unwrap();
         delete_test_task_json();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn add_task_with_priority() {
+        let mut task_manager = setup();
+
+        let title = "Test Task".to_string();
+        let description = "This is a test task".to_string();
+        let priority = TaskPriority::High;
+        let id = task_manager
+            .add_task(title.clone(), description.clone(), priority)
+            .unwrap();
+
+        let task = task_manager.tasks.get(&id).unwrap();
+        delete_test_task_json();
+
+        assert_eq!(task.title, title);
+        assert_eq!(task.description, description);
+        assert_eq!(task.status, TaskStatus::Todo);
+        assert_eq!(task.priority, priority);
+    }
+
+    #[test]
+    fn list_tasks_sorted_by_priority() {
+        let mut task_manager = setup();
+
+        task_manager
+            .add_task(
+                "Task 1".to_string(),
+                "Description 1".to_string(),
+                TaskPriority::Medium,
+            )
+            .unwrap();
+        task_manager
+            .add_task(
+                "Task 2".to_string(),
+                "Description 2".to_string(),
+                TaskPriority::High,
+            )
+            .unwrap();
+        task_manager
+            .add_task(
+                "Task 3".to_string(),
+                "Description 3".to_string(),
+                TaskPriority::Low,
+            )
+            .unwrap();
+
+        let tasks = task_manager.list_tasks_sorted_by_priority();
+        delete_test_task_json();
+
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0].priority, TaskPriority::Low);
+        assert_eq!(tasks[1].priority, TaskPriority::Medium);
+        assert_eq!(tasks[2].priority, TaskPriority::High);
     }
 }
