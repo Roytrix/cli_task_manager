@@ -1,16 +1,12 @@
 use crate::task_manager::TaskManager;
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
-use crossterm::execute;
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::{
+    event::{self, Event, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use ratatui::{prelude::*, widgets::*, Terminal};
 use std::io;
-use tui::backend::{Backend, CrosstermBackend};
-use tui::layout::{Constraint, Direction, Layout};
-use tui::style::{Color, Modifier, Style};
-use tui::text::{Span, Spans};
-use tui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
-use tui::Terminal;
 
 pub struct TuiApp {
     task_manager: TaskManager,
@@ -52,7 +48,8 @@ impl TuiApp {
 
     fn run_app<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
         loop {
-            terminal.draw(|f| self.ui(f))?;
+            terminal.draw(|f| self.ui::<B>(f))?;
+            let tasks = self.task_manager.list_tasks_sorted_by_priority();
 
             if let Event::Key(key) = event::read()? {
                 match key.code {
@@ -61,11 +58,10 @@ impl TuiApp {
                         let i = match self.list_state.selected() {
                             Some(i) => {
                                 if i == 0 {
-                                    if self.task_manager.list_tasks_sorted_by_priority().is_empty()
-                                    {
+                                    if tasks.is_empty() {
                                         0
                                     } else {
-                                        self.task_manager.list_tasks_sorted_by_priority().len() - 1
+                                        tasks.len() - 1
                                     }
                                 } else {
                                     i - 1
@@ -79,14 +75,13 @@ impl TuiApp {
                         let i = match self.list_state.selected() {
                             Some(i) => {
                                 if i == 0 {
-                                    if self.task_manager.list_tasks_sorted_by_priority().is_empty()
-                                    {
+                                    if tasks.is_empty() {
                                         0
                                     } else {
-                                        self.task_manager.list_tasks_sorted_by_priority().len() - 1
+                                        tasks.len() + 1
                                     }
                                 } else {
-                                    i - 1
+                                    i + 1
                                 }
                             }
                             None => 0,
@@ -102,18 +97,33 @@ impl TuiApp {
         }
     }
 
-    fn ui<B: Backend>(&self, f: &mut tui::Frame<B>) {
+    fn ui<B: Backend>(&self, f: &mut Frame) {
+        let size = Frame::area(f);
+
         let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(30), Constraint::Percentage(70)].as_ref())
-            .split(f.size());
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(5),
+                Constraint::Length(3),
+            ])
+            .split(size);
+
+        let block = Block::default().title("Task Manager").borders(Borders::ALL);
+        f.render_widget(block, size);
+        if self.task_manager.list_tasks_sorted_by_priority().is_empty() {
+            let no_tasks = Paragraph::new("No tasks available")
+                .block(Block::default().borders(Borders::ALL).title("Tasks"));
+            f.render_widget(no_tasks, chunks[0]);
+            return;
+        }
 
         let tasks: Vec<ListItem> = self
             .task_manager
             .list_tasks_sorted_by_priority()
             .iter()
             .map(|task| {
-                ListItem::new(Spans::from(vec![Span::styled(
+                ListItem::new(Line::from(vec![Span::styled(
                     task.title.clone(),
                     Style::default().add_modifier(Modifier::BOLD),
                 )]))
@@ -132,22 +142,22 @@ impl TuiApp {
             if !tasks.is_empty() {
                 let task = &tasks[selected];
                 let task_detail = Paragraph::new(vec![
-                    Spans::from(vec![
+                    Line::from(vec![
                         Span::styled("Title: ", Style::default().add_modifier(Modifier::BOLD)),
                         Span::raw(&task.title),
                     ]),
-                    Spans::from(vec![
+                    Line::from(vec![
                         Span::styled(
                             "Description: ",
                             Style::default().add_modifier(Modifier::BOLD),
                         ),
                         Span::raw(&task.description),
                     ]),
-                    Spans::from(vec![
+                    Line::from(vec![
                         Span::styled("Priority: ", Style::default().add_modifier(Modifier::BOLD)),
                         Span::raw(format!("{:?}", task.priority)),
                     ]),
-                    Spans::from(vec![
+                    Line::from(vec![
                         Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
                         Span::raw(format!("{:?}", task.status)),
                     ]),
